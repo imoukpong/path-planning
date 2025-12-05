@@ -2,38 +2,18 @@ import os
 import numpy as np
 
 
-class Cell(object):
+class Cell:
     def __init__(self, i, j):
-        self.i = i  # x-axis index (column)
-        self.j = j  # y-axis index (row)
-
-
-"""TODO: You may consider defining a class to store your node data. If so, do
-that here."""
+        self.i = i
+        self.j = j
 
 
 class GridGraph:
-    """Helper class to represent an occupancy grid map as a graph."""
     def __init__(self, file_path=None, width=-1, height=-1, origin=(0, 0),
                  meters_per_cell=0, cell_odds=None, collision_radius=0.15, threshold=-100):
-        """Constructor for the GridGraph class.
 
-        Args:
-            file_path: Path to the map file to load. If provided, all other map
-                       properties are loaded from this file.
-            width: Map width in cells.
-            height: Map height in cells.
-            origin: The (x, y) coordinates in meters of the cell (0, 0).
-            meters_per_cell: Size in meters of one cell.
-            cell_odds: List of length width * height containing the odds each
-                       cell is occupied, in range [127, -128]. High values are
-                       more likely to be occupied.
-            collision_radius: The radius to consider when computing collisions in meters.
-            threshold: Cells above this value are considered to be in collision.
-        """
-        if file_path is not None:
-            # If the file is provided, load the map.
-            assert self.load_from_file(file_path)
+        if file_path:
+            self._load(file_path)
         else:
             self.width = width
             self.height = height
@@ -42,139 +22,81 @@ class GridGraph:
             self.cell_odds = cell_odds
 
         self.threshold = threshold
-        self.set_collision_radius(collision_radius)
-        self.visited_cells = []  # Stores which cells have been visited in order for visualization.
+        self._setup_collision(collision_radius)
 
-        # TODO: Define any additional member variables to store node data.
+        self.visited_cells = []
+        self.parent = {}
+        self.distance = {}
 
     def as_string(self):
-        """Returns the map data as a string for visualization."""
-        map_list = self.cell_odds.astype(str).tolist()
-        rows = [' '.join(row) for row in map_list]
-        cell_data = ' '.join(rows)
-        header_data = f"{self.origin[0]} {self.origin[1]} {self.width} {self.height} {self.meters_per_cell}"
-        return ' '.join([header_data, cell_data])
+        hdr = f"{self.origin[0]} {self.origin[1]} {self.width} {self.height} {self.meters_per_cell}"
+        flat = ' '.join(' '.join(row) for row in self.cell_odds.astype(str))
+        return f"{hdr} {flat}"
 
-    def load_from_file(self, file_path):
-        """Loads the map data from a file."""
+    def _load(self, file_path):
         if not os.path.isfile(file_path):
-            print(f'ERROR: loadFromFile: Failed to load from {file_path}')
-            return False
+            raise RuntimeError(f"Could not load map file: {file_path}")
 
-        with open(file_path, 'r') as file:
-            header = file.readline().split()
-            origin_x, origin_y, self.width, self.height, self.meters_per_cell = map(float, header)
-            self.origin = (origin_x, origin_y)
-            self.width = int(self.width)
-            self.height = int(self.height)
+        with open(file_path, "r") as f:
+            ox, oy, w, h, res = map(float, f.readline().split())
+            self.origin = (ox, oy)
+            self.width, self.height = int(w), int(h)
+            self.meters_per_cell = res
 
-            # Check sanity of values.
-            if self.width < 0 or self.height < 0 or self.meters_per_cell < 0.0:
-                print('ERROR: loadFromFile: Incorrect parameters')
-                return False
-
-            # Reset odds list.
             self.cell_odds = np.zeros((self.height, self.width), dtype=np.int8)
 
-            # Read in each cell value.
             for r in range(self.height):
-                row = file.readline().strip().split()
+                vals = f.readline().split()
                 for c in range(self.width):
-                    self.cell_odds[r, c] = np.int8(row[c])
-
-        return True
+                    self.cell_odds[r, c] = np.int8(vals[c])
 
     def pos_to_cell(self, x, y):
-        """Converts a global position to the corresponding cell in the graph.
-        Args:
-            x: The global x position in meters.
-            y: The global y position in meters.
-        Returns:
-            The cell coordinate in the graph.
-        """
-        i = int(np.floor((x - self.origin[0]) / self.meters_per_cell))
-        j = int(np.floor((y - self.origin[1]) / self.meters_per_cell))
-
-        return Cell(i, j)
+        ci = int((x - self.origin[0]) // self.meters_per_cell)
+        cj = int((y - self.origin[1]) // self.meters_per_cell)
+        return Cell(ci, cj)
 
     def cell_to_pos(self, i, j):
-        """Converts a cell coordinate in the graph to the corresponding global position.
-        Args:
-            i: The x-axis index (column) of the cell in the graph.
-            j: The y-axis index (row) index of the cell in the graph.
-        Returns:
-            A tuple containing the global position, (x, y)."""
-        x = (i + 0.5) * self.meters_per_cell + self.origin[0]
-        y = (j + 0.5) * self.meters_per_cell + self.origin[1]
+        x = self.origin[0] + (i + 0.5) * self.meters_per_cell
+        y = self.origin[1] + (j + 0.5) * self.meters_per_cell
         return x, y
 
     def is_cell_in_bounds(self, i, j):
-        """Checks whether the provided cell is within the bounds of the graph."""
-        return i >= 0 and i < self.width and j >= 0 and j < self.height
+        return 0 <= i < self.width and 0 <= j < self.height
 
     def is_cell_occupied(self, i, j):
-        """Checks whether the provided index in the graph is occupied (i.e. above
-        the threshold.)"""
         return self.cell_odds[j, i] >= self.threshold
 
-    def set_collision_radius(self, r):
-        """Sets the collision radius and precomputes some values to help check
-        for collisions.
-        Args:
-            r: The collision radius (meters).
-        """
-        r_cells = int(np.ceil(r / self.meters_per_cell))  # Radius in cells.
-        # Get all the indices in a mask covering the robot.
-        r_indices, c_indices = np.indices((2 * r_cells - 1, 2 * r_cells - 1))
-        c = r_cells - 1  # Center point of the mask.
-        dists = (r_indices - c)**2 + (c_indices - c)**2  # Distances to the center point.
-        # These are the indices which are in collision for the robot with this radius.
-        self._coll_ind_j, self._coll_ind_i = np.nonzero(dists <= (r_cells - 1)**2)
+    def _setup_collision(self, r):
+        cells = int(np.ceil(r / self.meters_per_cell))
+        dim = 2 * cells - 1
 
-        # Save the radius values.
+        rr, cc = np.indices((dim, dim))
+        center = cells - 1
+        mask = (rr - center) ** 2 + (cc - center) ** 2 <= (cells - 1) ** 2
+
+        self._coll_ind_j, self._coll_ind_i = np.where(mask)
         self.collision_radius = r
-        self.collision_radius_cells = r_cells
+        self.collision_radius_cells = cells
 
     def check_collision(self, i, j):
-        """Checks whether this cell is in collision based on the collision radius
-        defined in the graph."""
-        # We will use the previously calculated mask over the robot radius to
-        # check whether any indices in a radius around the robot are in collision.
-        j_inds = self._coll_ind_j + j - (self.collision_radius_cells - 1)
-        i_inds = self._coll_ind_i + i - (self.collision_radius_cells - 1)
+        js = self._coll_ind_j + j - (self.collision_radius_cells - 1)
+        is_ = self._coll_ind_i + i - (self.collision_radius_cells - 1)
 
-        # These are the indices in the bounds of the grid after we shift the
-        # robot mask to the cell we are checking.
-        in_bounds = np.bitwise_and(np.bitwise_and(j_inds >= 0, j_inds < self.height),
-                                   np.bitwise_and(i_inds >= 0, i_inds < self.width))
-
-        return np.any(self.is_cell_occupied(i_inds[in_bounds], j_inds[in_bounds]))
+        valid = (js >= 0) & (js < self.height) & (is_ >= 0) & (is_ < self.width)
+        return np.any(self.is_cell_occupied(is_[valid], js[valid]))
 
     def get_parent(self, cell):
-        """Returns a Cell object representing the parent of the given cell, or
-        None if the node has no parent. This function is used to trace back the
-        path after graph search."""
-        # TODO (P3): Return the parent of the node at the cell.
-        return None
+        return self.parent.get((cell.i, cell.j))
 
     def init_graph(self):
-        """Initializes the node data in the graph in preparation for graph search.
-
-        When this funtion is called, the graph will have loaded the members
-        which store the properties of the graph, like width, height, and cell
-        odds values. You should use this information to initialize your added
-        values, like the distances and the nodes."""
-        self.visited_cells = []  # Reset visited cells for visualization.
-
-        # TODO (P3): Initialize your graph nodes.
+        self.visited_cells = []
+        self.parent.clear()
+        self.distance.clear()
 
     def find_neighbors(self, i, j):
-        """Returns a list of the neighbors of the given cell. This should not
-        include any cells outside of the bounds of the graph."""
         nbrs = []
-        # TODO (P3): Return a list of the indices of all the neighbors of the node
-        # at cell (i, j). You should not include any cells that are outside of the
-        # bounds of the graph.
-
-        # HINT: The function is_cell_in_bounds() might come in handy.
+        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
+            ni, nj = i + dx, j + dy
+            if self.is_cell_in_bounds(ni, nj) and not self.check_collision(ni, nj):
+                nbrs.append(Cell(ni, nj))
         return nbrs

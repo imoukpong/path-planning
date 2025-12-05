@@ -1,68 +1,90 @@
 import numpy as np
+import heapq
+from collections import deque
 from .graph import Cell
 from .utils import trace_path
 
-"""
-General graph search instructions:
-
-First, define the correct data type to keep track of your visited cells
-and add the start cell to it. If you need to initialize any properties
-of the start cell, do that too.
-
-Next, implement the graph search function. When you find a path, use the
-trace_path() function to return a path given the goal cell and the graph. You
-must have kept track of the parent of each node correctly and have implemented
-the graph.get_parent() function for this to work. If you do not find a path,
-return an empty list.
-
-To visualize which cells are visited in the navigation webapp, save each
-visited cell in the list in the graph class as follows:
-     graph.visited_cells.append(Cell(cell_i, cell_j))
-where cell_i and cell_j are the cell indices of the visited cell you want to
-visualize.
-"""
-
 
 def depth_first_search(graph, start, goal):
-    """Depth First Search (DFS) algorithm. This algorithm is optional for P3.
-    Args:
-        graph: The graph class.
-        start: Start cell as a Cell object.
-        goal: Goal cell as a Cell object.
-    """
-    graph.init_graph()  # Make sure all the node values are reset.
+    graph.init_graph()
+    stack = [start]
+    seen = set([(start.i, start.j)])
+    graph.parent[(start.i, start.j)] = None
 
-    """TODO (P3): Implement DFS (optional)."""
+    while stack:
+        node = stack.pop()
+        graph.visited_cells.append(Cell(node.i, node.j))
 
-    # If no path was found, return an empty list.
+        if node.i == goal.i and node.j == goal.j:
+            return trace_path(goal, graph)
+
+        for nxt in graph.find_neighbors(node.i, node.j):
+            key = (nxt.i, nxt.j)
+            if key not in seen:
+                seen.add(key)
+                graph.parent[key] = Cell(node.i, node.j)
+                stack.append(nxt)
+
     return []
 
 
 def breadth_first_search(graph, start, goal):
-    """Breadth First Search (BFS) algorithm.
-    Args:
-        graph: The graph class.
-        start: Start cell as a Cell object.
-        goal: Goal cell as a Cell object.
-    """
-    graph.init_graph()  # Make sure all the node values are reset.
+    graph.init_graph()
+    q = deque([start])
+    seen = {(start.i, start.j)}
+    graph.parent[(start.i, start.j)] = None
 
-    """TODO (P3): Implement BFS."""
+    while q:
+        node = q.popleft()
+        graph.visited_cells.append(Cell(node.i, node.j))
 
-    # If no path was found, return an empty list.
+        if node.i == goal.i and node.j == goal.j:
+            return trace_path(goal, graph)
+
+        for nxt in graph.find_neighbors(node.i, node.j):
+            key = (nxt.i, nxt.j)
+            if key not in seen:
+                seen.add(key)
+                graph.parent[key] = Cell(node.i, node.j)
+                q.append(nxt)
+
     return []
 
 
 def a_star_search(graph, start, goal):
-    """A* Search (BFS) algorithm.
-    Args:
-        graph: The graph class.
-        start: Start cell as a Cell object.
-        goal: Goal cell as a Cell object.
-    """
-    graph.init_graph()  # Make sure all the node values are reset.
+    graph.init_graph()
 
-    """TODO (P3): Implement A*."""
+    def heuristic(c):
+        return ((c.i - goal.i) ** 2 + (c.j - goal.j) ** 2) ** 0.5
 
-    # If no path was found, return an empty list.
+    graph.parent[(start.i, start.j)] = None
+    graph.distance[(start.i, start.j)] = 0
+
+    idx = 0
+    pq = [(heuristic(start), 0, idx, start)]
+    visited = set()
+
+    while pq:
+        f, g, _, node = heapq.heappop(pq)
+        key = (node.i, node.j)
+
+        if key in visited:
+            continue
+
+        visited.add(key)
+        graph.visited_cells.append(Cell(node.i, node.j))
+
+        if node.i == goal.i and node.j == goal.j:
+            return trace_path(goal, graph)
+
+        for nxt in graph.find_neighbors(node.i, node.j):
+            nk = (nxt.i, nxt.j)
+            cost = g + 1
+
+            if nk not in visited and (nk not in graph.distance or cost < graph.distance[nk]):
+                graph.distance[nk] = cost
+                graph.parent[nk] = Cell(node.i, node.j)
+                idx += 1
+                heapq.heappush(pq, (cost + heuristic(nxt), cost, idx, nxt))
+
     return []
